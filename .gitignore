@@ -1,4 +1,5 @@
 RawData/
 Analysis/
+Precomputed/
 __pycache__/
 *.pyc
