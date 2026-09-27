@@ -1,0 +1,4 @@
+RawData/
+Analysis/
+__pycache__/
+*.pyc
