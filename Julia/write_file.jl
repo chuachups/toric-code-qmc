@@ -1,4 +1,4 @@
-function write_output_file(states_init, operators_init, states, operators, M_data, n_arr, n_A_arr, n_B_arr, n_zz_arr, n_xx_arr, m_arr, m_2_arr, m_4_arr, S_0_arr, S_kmin_arr, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
+function write_output_file(states_init, operators_init, states, operators, M_data, n_arr, n_A_arr, n_B_arr, n_zz_arr, n_xx_arr, m_arr, m_2_arr, m_4_arr, S_kmin_arr, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
     # Convert the RNG state to bytes
     io = IOBuffer()
     serialize(io, rng)
@@ -21,7 +21,6 @@ function write_output_file(states_init, operators_init, states, operators, M_dat
         file["measurements/m"] = m_arr
         file["measurements/m_2"] = m_2_arr
         file["measurements/m_4"] = m_4_arr
-        file["measurements/S_0"] = S_0_arr
         file["measurements/S_kmin"] = S_kmin_arr
 
         # Store the parameters

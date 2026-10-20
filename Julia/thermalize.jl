@@ -19,7 +19,6 @@ function thermalize(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C
     mz_arr = Float64[]
     mz_2_arr = Float64[]
     mz_4_arr = Float64[]
-    S_0_arr = Float64[]
     S_kmin_arr = Float64[]
 
     # If J_2 = 0, the initial configuration should have no XX operators
@@ -29,9 +28,9 @@ function thermalize(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C
 
     for i in 1:num_sweeps
         # Perform sweep
-        states, operators = qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, rng)
+        states, operators = qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, rng, false)
         # Perform measurements
-        n, n_A, n_B, n_zz, n_xx, mz, mz_2, mz_4, S_0, S_kmin = measure_all(states, operators, L)
+        n, n_A, n_B, n_zz, n_xx, mz, mz_2, mz_4, S_kmin = measure_all(states, operators, L)
         push!(M_arr, length(states))
         push!(n_arr, n)
         push!(n_A_arr, n_A)
@@ -45,7 +44,6 @@ function thermalize(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C
         push!(mz_arr, mz)
         push!(mz_2_arr, mz_2)
         push!(mz_4_arr, mz_4)
-        push!(S_0_arr, S_0)
         push!(S_kmin_arr, S_kmin)
         # Update the cutoff
         for i in 1:max(0, ceil(Int, 4/3 * n - length(states)))
@@ -55,8 +53,8 @@ function thermalize(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C
     end
 
     if basis == "X"
-        write_output_file(states_init, operators_init, states, operators, M_arr, n_arr, n_B_arr, n_A_arr, n_xx_arr, n_zz_arr, mz_arr, mz_2_arr, mz_4_arr, S_0_arr, S_kmin_arr, L, beta, J_2, J_1, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
+        write_output_file(states_init, operators_init, states, operators, M_arr, n_arr, n_B_arr, n_A_arr, n_xx_arr, n_zz_arr, mz_arr, mz_2_arr, mz_4_arr, S_kmin_arr, L, beta, J_2, J_1, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
     else
-        write_output_file(states_init, operators_init, states, operators, M_arr, n_arr, n_A_arr, n_B_arr, n_zz_arr, n_xx_arr, mz_arr, mz_2_arr, mz_4_arr, S_0_arr, S_kmin_arr, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
+        write_output_file(states_init, operators_init, states, operators, M_arr, n_arr, n_A_arr, n_B_arr, n_zz_arr, n_xx_arr, mz_arr, mz_2_arr, mz_4_arr, S_kmin_arr, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
     end
 end

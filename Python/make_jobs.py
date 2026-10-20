@@ -1,4 +1,4 @@
-# This Python function will call the following Julia function run_job()
+# This Python function will take the simple job description (stored in jobs.py) and construct the complete command required by Julia
 #
 # Each job specifies the following information
 # 1. Parameters: L, beta, J_1, J_2, basis
@@ -20,7 +20,6 @@
 import os
 import random
 import math
-import subprocess
 
 def make_job(job):
     # Unpack
@@ -45,6 +44,8 @@ def make_job(job):
     # Construct filename and determine the latest entry in the given run
     filename = make_file_name(L, beta, J_1, J_2, basis, run, task)
     entry_num = latest_entry(filename)
+
+    # Construct the full job description, which is a list of the following parameters
 
     # For "thermalize"
     if task == "thermalize":
@@ -81,14 +82,24 @@ def make_job(job):
                     if entry_num_prev == -1:
                         raise FileNotFoundError("No existing entries for the specified warm start run yet.")
 
-                run_job(filename + str(entry_num + 1) + ".h5", L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, task, num_sweeps, prev_file = filename_prev + str(entry_num_prev) + ".h5", seed = rng_seed)
+                output_file = filename + str(entry_num + 1) + ".h5"
+                prev_file = filename_prev + str(entry_num_prev) + ".h5"
+                state = 0
+                M = 0
+                use_prev_rng = False
+                seed = rng_seed
 
             # If no warm start is given, create a random initial state and determine M
             else:
                 state_init = random.randrange(2**(2 * L**2))
                 M_init = math.ceil(beta * L**2)
 
-                run_job(filename + str(entry_num + 1) + ".h5", L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, task, num_sweeps, state = state_init, M = M_init, seed = rng_seed)
+                output_file = filename + str(entry_num + 1) + ".h5"
+                prev_file = ""
+                state = state_init
+                M = M_init
+                use_prev_rng = False
+                seed = rng_seed
 
         # If a previous thermalization exists, use it
         else:
@@ -96,7 +107,12 @@ def make_job(job):
             if "previous" in job:
                 raise ValueError("Cannot use warm start path because data already exists.")
 
-            run_job(filename + str(entry_num + 1) + ".h5", L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, task, num_sweeps, prev_file = filename + str(entry_num) + ".h5", use_prev_rng = True)
+            output_file = filename + str(entry_num + 1) + ".h5"
+            prev_file = filename + str(entry_num) + ".h5"
+            state = 0
+            M = 0
+            use_prev_rng = True
+            seed = 0
     
     # If the task is "simulate", determine the latest simulation
     elif task == "simulate":
@@ -114,14 +130,53 @@ def make_job(job):
             if entry_num_prev == -1:
                 raise FileNotFoundError("No existing thermalization for this set of parameters yet.")
 
-            run_job(filename + str(entry_num + 1) + ".h5", L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, task, num_sweeps, prev_file = filename_prev + str(entry_num_prev) + ".h5", use_prev_rng = True)
+            output_file = filename + str(entry_num + 1) + ".h5"
+            prev_file = filename_prev + str(entry_num_prev) + ".h5"
+            state = 0
+            M = 0
+            use_prev_rng = True
+            seed = 0
 
         # If a previous simulation exists, use it
         else:
-            run_job(filename + str(entry_num + 1) + ".h5", L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, task, num_sweeps, prev_file = filename + str(entry_num) + ".h5", use_prev_rng = True)
+            output_file = filename + str(entry_num + 1) + ".h5"
+            prev_file = filename + str(entry_num) + ".h5"
+            state = 0
+            M = 0
+            use_prev_rng = True
+            seed = 0
 
     else:
         raise ValueError(f"Invalid task: {task}")
+
+    # Construct the full command
+    command = [
+            "julia",
+            "Julia/main.jl",
+    
+            "--filename", output_file,
+            "--L", str(L),
+            "--beta", str(beta),
+            "--J1", str(J_1),
+            "--J2", str(J_2),
+            "--C1", str(C_1),
+            "--C2", str(C_2),
+            "--C3", str(C_3),
+            "--C4", str(C_4),
+            "--basis", basis,
+            "--task", task,
+            "--num-sweeps", str(num_sweeps),
+        ]
+    if prev_file != "":
+        command += ["--prev-file", prev_file]
+    else:
+        command += ["--state", str(state), "--M", str(M)]
+    if use_prev_rng:
+        command += ["--use-prev-rng"]
+    else:
+        command += ["--seed", str(seed)]
+
+    return command
 
 # Helper function, create the filename
 def make_file_name(L, beta, J_1, J_2, basis, run, task):
@@ -133,36 +188,4 @@ def latest_entry(filename_prefix):
     while os.path.isfile(filename_prefix + str(entry_num) + ".h5"):
         entry_num += 1
     return entry_num - 1
-
-# This function calls the Julia function run_job()
-def run_job(output_file, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, task, num_sweeps, *, prev_file="", state=0, M=0, use_prev_rng=False, seed=0):
-    # Create the command to be run
-    command = [
-        "julia",
-        "Julia/main.jl",
-
-        "--filename", output_file,
-        "--L", str(L),
-        "--beta", str(beta),
-        "--J1", str(J_1),
-        "--J2", str(J_2),
-        "--C1", str(C_1),
-        "--C2", str(C_2),
-        "--C3", str(C_3),
-        "--C4", str(C_4),
-        "--basis", basis,
-        "--task", task,
-        "--num-sweeps", str(num_sweeps),
-    ]
-    if prev_file != "":
-        command += ["--prev-file", prev_file]
-    else:
-        command += ["--state", str(state), "--M", str(M)]
-    if use_prev_rng:
-        command += ["--use-prev-rng"]
-    else:
-        command += ["--seed", str(seed)]
-
-    # Run
-    subprocess.run(command, check=True)
     
