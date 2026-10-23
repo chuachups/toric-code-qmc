@@ -21,7 +21,7 @@ import os
 import random
 import math
 
-def make_job(job):
+def make_job(job, pbs=False):
     # Unpack
     L = job["L"]
     beta = job["beta"]
@@ -150,23 +150,43 @@ def make_job(job):
         raise ValueError(f"Invalid task: {task}")
 
     # Construct the full command
-    command = [
-            "julia",
-            "Julia/main.jl",
-    
-            "--filename", output_file,
-            "--L", str(L),
-            "--beta", str(beta),
-            "--J1", str(J_1),
-            "--J2", str(J_2),
-            "--C1", str(C_1),
-            "--C2", str(C_2),
-            "--C3", str(C_3),
-            "--C4", str(C_4),
-            "--basis", basis,
-            "--task", task,
-            "--num-sweeps", str(num_sweeps),
-        ]
+    if pbs == False:
+        command = [
+                "julia",
+                "Julia/main.jl",
+        
+                "--filename", output_file,
+                "--L", str(L),
+                "--beta", str(beta),
+                "--J1", str(J_1),
+                "--J2", str(J_2),
+                "--C1", str(C_1),
+                "--C2", str(C_2),
+                "--C3", str(C_3),
+                "--C4", str(C_4),
+                "--basis", basis,
+                "--task", task,
+                "--num-sweeps", str(num_sweeps),
+            ]
+    else:
+        command = [
+                "julia",
+                "--project=.",
+                "Julia/main.jl",
+        
+                "--filename", output_file,
+                "--L", str(L),
+                "--beta", str(beta),
+                "--J1", str(J_1),
+                "--J2", str(J_2),
+                "--C1", str(C_1),
+                "--C2", str(C_2),
+                "--C3", str(C_3),
+                "--C4", str(C_4),
+                "--basis", basis,
+                "--task", task,
+                "--num-sweeps", str(num_sweeps),
+            ]
     if prev_file != "":
         command += ["--prev-file", prev_file]
     else:

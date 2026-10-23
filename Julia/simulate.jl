@@ -70,10 +70,10 @@ function test_offdiagonal(states, operators, diagonals, L, beta, J_1, J_2, C_1, 
     println("Cutoff: $(length(states))")
     for i in 1:num_sweeps
         # Perform sweep
-        states, operators = qmc_sweep_old(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, rng, false)
+        states, operators = qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, rng, false)
     end
 
     # Perform sweep
     println("Off diagonal update")
-    states, operators = qmc_sweep_old(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, rng, true)
+    states, operators = qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, rng, true)
 end

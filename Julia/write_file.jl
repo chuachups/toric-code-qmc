@@ -34,7 +34,7 @@ function write_output_file(states_init, operators_init, states, operators, M_dat
         file["parameters/C_4"] = C_4
 
         # Store metadata for reproducibility
-        file["metadata/version"] = strip(read(`git rev-parse HEAD`, String))
+        #file["metadata/version"] = strip(read(`git rev-parse HEAD`, String))
         file["metadata/date"] = Dates.format(now(), dateformat"yyyy-mm-ddTHH:MM:SSxxx")
         file["metadata/basis"] = basis
         file["metadata/num_sweeps"] = num_sweeps

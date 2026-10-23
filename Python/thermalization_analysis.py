@@ -111,5 +111,5 @@ def gen_plot(filename, var):
 
         plt.show()
 
-#gen_all_plots()
-gen_plot("RawData/__L_3/__beta_5.000__J1_0.100__J2_0.000/__basis_Z/run_0/simulate_1.h5", "m2")
+gen_all_plots()
+#gen_plot("RawData/__L_2/__beta_5.000__J1_0.100__J2_0.000/__basis_Z/run_1/simulate_1.h5", "m2")

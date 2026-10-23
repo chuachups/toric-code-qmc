@@ -209,4 +209,4 @@ def print_all(filename):
         mean, err = jackknife(observable, data, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis)
         print(observable, ":", format_result(mean, err))
 
-print_all("RawData/__L_2/__beta_5.000__J1_0.100__J2_0.100/__basis_Z/run_1/simulate_1.h5")
+print_all("RawData/__L_2/__beta_1.000__J1_1.000__J2_0.000/__basis_Z/run_1/simulate_0.h5")

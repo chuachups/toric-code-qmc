@@ -54,7 +54,8 @@ function run_job(filename, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, task, n
         thermalize(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
     elseif task == "simulate"
         simulate(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
-        #test_offdiagonal(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
+    elseif task == "test"
+        test_offdiagonal(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
     else
         error("Not a valid task.")
     end
