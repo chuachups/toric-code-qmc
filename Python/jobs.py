@@ -8,12 +8,48 @@
 jobs = [
     {
         "L" : 2,
-        "beta" : 1,
+        "beta" : 5,
         "J_1" : 1,
-        "J_2" : 1,
+        "J_2" : 0.5,
         "basis" : "Z",
 
-        "run" : 1,
+        "run" : 0,
+
+        "task" : "simulate",
+        "num_sweeps" : 10000000
+    },
+    {
+        "L" : 2,
+        "beta" : 5,
+        "J_1" : 1,
+        "J_2" : 0.5,
+        "basis" : "X",
+
+        "run" : 0,
+
+        "task" : "simulate",
+        "num_sweeps" : 10000000
+    },
+    {
+        "L" : 3,
+        "beta" : 6,
+        "J_1" : 1,
+        "J_2" : 0,
+        "basis" : "Z",
+
+        "run" : 0,
+
+        "task" : "simulate",
+        "num_sweeps" : 1000000
+    },
+    {
+        "L" : 3,
+        "beta" : 6,
+        "J_1" : 1,
+        "J_2" : 0,
+        "basis" : "X",
+
+        "run" : 0,
 
         "task" : "simulate",
         "num_sweeps" : 1000000

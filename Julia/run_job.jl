@@ -36,14 +36,22 @@ function run_job(filename, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, task, n
     end
 
     # Create / recover the diagonal operator list for this value of L
+    # [REVISION 2026-10-23] Always build the list from the (corrected) lattice functions. A cache written by the
+    # original code contains the old, wrong vertex masks and would silently bring the bug back, so a cached file is
+    # kept only if it is identical to the freshly built list; otherwise it is overwritten with a warning.
+    diagonals = find_all_diagonals(L)
     diagonals_filename = "Precomputed/diagonals_L$(L).h5"
     if isfile(diagonals_filename)
-        h5open(diagonals_filename, "r") do file
-            diagonals_mat = read(file["diagonals"])
-            diagonals = [diagonals_mat[:, i] for i in axes(diagonals_mat, 2)]
+        cached = h5open(diagonals_filename, "r") do file
+            read(file["diagonals"])
         end
-    else
-        diagonals = find_all_diagonals(L)
+        if cached != reduce(hcat, diagonals)
+            @warn "Cached $(diagonals_filename) differs from the current lattice definition; overwriting it."
+            rm(diagonals_filename)
+        end
+    end
+    if !isfile(diagonals_filename)
+        mkpath(dirname(diagonals_filename))
         h5open(diagonals_filename, "w") do file
             file["diagonals"] = reduce(hcat, diagonals)
         end

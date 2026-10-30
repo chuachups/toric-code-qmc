@@ -25,6 +25,13 @@
 # The off-diagonal updates attempt to replace diagonal operators with the corresponding off-diagonal
 # operators (IIII <-> XXXX, ZZ <-> XX). This is done simultaneously for all operators linked together
 # by the spins they act on (referred to as a cluster). The spins in the cluster are flipped (up <-> down).
+# The cluster construction propogates the spin lines along all flippable operators (IIII, XXXX, ZZ/II (if J_2 =/= 0), XX)
+# but passes straight through the non-flippable operators (ZZZZ, ZZ (if J_2 =/= 0)).
+# There are three additional updates to help with ergodicity and convergence:
+# 1. Spin column flips: Flip all spins at a certain site for all imaginary time
+# 2. Dual loop updates: Flip all spins along a dual loop for all imaginary time
+# 3. Interval updates: Similar to cluster update, but consists of only two flippable operators. The spin line passes through
+#    all operators in between.
 
 # Conventions:
 # 1. Each spin is assigned an index i from 0 to 2L^2 - 1. 
@@ -64,14 +71,18 @@ function find_all_vertices(L)
     for x in 1:L
         for y in 1:L
             vertex = 0
-            # Find the top spin
-            vertex |= 1 << ((x - 1) + L * mod(y - 2, L))
-            # Find the bottom spin
-            vertex |= 1 << ((x - 1) + L * (y - 1))
-            # Find the left spin
-            vertex |= 1 << (L^2 + mod(x - 2, L) + L * (y - 1))
-            # Find the right spin
+            # [REVISION 2026-10-23] The L^2 offset was on the wrong pair of spins: the top/bottom spins used the
+            # horizontal-link formula and the left/right spins used the vertical-link formula. That made every
+            # "vertex" equal to a plaquette for L=2, and made vertices anticommute with plaquettes for L>=3.
+            # Corrected: top/bottom are vertical links (offset L^2), left/right are horizontal links (no offset).
+            # Find the top spin (vertical link whose lower end is (x,y), i.e. the link above the vertex)
+            vertex |= 1 << (L^2 + (x - 1) + L * mod(y - 2, L))
+            # Find the bottom spin (vertical link below the vertex)
             vertex |= 1 << (L^2 + (x - 1) + L * (y - 1))
+            # Find the left spin (horizontal link to the left of the vertex)
+            vertex |= 1 << (mod(x - 2, L) + L * (y - 1))
+            # Find the right spin (horizontal link to the right of the vertex)
+            vertex |= 1 << ((x - 1) + L * (y - 1))
             push!(vertices, vertex)
         end
     end
@@ -130,6 +141,185 @@ function find_all_bonds(L)
     return bonds
 end
 
+# [REVISION 2026-10-23] New helper for the topological-sector update (see REVISION_LOG.md).
+# Given the size L, return a list of all non-contractible dual loops (X Wilson loops), each stored as an integer
+# whose binary digits are 1 for the spins on the loop. A dual loop is a set of spins such that every plaquette
+# contains an even number of them, so flipping the loop leaves every B_p (and every vertex term) unchanged, but
+# it flips the conserved Z Wilson loop that it crosses. Candidates: the L horizontal links of one column, and the
+# L vertical links of one row. Only candidates with even overlap with every plaquette are kept (this filter
+# keeps the dual loops for either assignment of the plaquettes/vertices, e.g. in the X basis).
+function find_all_dual_loops(L)
+    plaquettes = find_all_plaquettes(L)
+    candidates = Int[]
+    for a in 1:L
+        h_column = 0    # horizontal links (x = a, all y)
+        h_row = 0       # horizontal links (all x, y = a)
+        v_column = 0    # vertical links (x = a, all y)
+        v_row = 0       # vertical links (all x, y = a)
+        for b in 1:L
+            h_column |= 1 << ((a - 1) + L * (b - 1))
+            h_row |= 1 << ((b - 1) + L * (a - 1))
+            v_column |= 1 << (L^2 + (a - 1) + L * (b - 1))
+            v_row |= 1 << (L^2 + (b - 1) + L * (a - 1))
+        end
+        append!(candidates, [h_column, h_row, v_column, v_row])
+    end
+    loops = filter(c -> all(p -> iseven(count_ones(c & p)), plaquettes), unique(candidates))
+    # There must be L loops in each of the two winding directions
+    @assert length(loops) == 2 * L "Expected $(2L) dual loops, found $(length(loops))"
+    return loops
+end
+
+# [REVISION 2026-10-23] New helper for the topological-sector update (see REVISION_LOG.md).
+# Given the configuration and a dual loop, return the weight ratio W(loop flipped at all times) / W(current).
+# Only diagonal operators with an odd overlap with the loop change their matrix element; for a true dual loop
+# these are the ZZ bonds crossing it (ZZZZ always has even overlap, but is handled anyway for safety).
+# XXXX, IIII, XX and II (J_1 = 0) operators have spin-independent matrix elements.
+function dual_loop_ratio(states, operators, loop, J_1, C_1, C_2)
+    ratio = 1.0
+    for i in 1:length(operators)
+        op = operators[i]
+        if op[1] == 0 || iseven(count_ones(op[2] & loop))
+            continue
+        end
+        # ZZZZ (plaquette)
+        if op[1] == 1
+            ratio *= (C_1 - (-1)^(count_ones(op[2] & states[i]))) / (C_1 + (-1)^(count_ones(op[2] & states[i])))
+        # ZZ (bond); if J_1 = 0 this is II with constant weight C_4
+        elseif op[1] == 3 && J_1 != 0
+            ratio *= (C_2 - (-1)^(count_ones(op[2] & states[i]))) / (C_2 + (-1)^(count_ones(op[2] & states[i])))
+        end
+    end
+    return ratio
+end
+
+# [REVISION 2026-10-24] Lattice lists are cached per L (they used to be rebuilt in every sweep).
+const LATTICE_CACHE = Dict{Int, Any}()
+function lattice_lists(L)
+    get!(LATTICE_CACHE, L) do
+        (vertices = find_all_vertices(L), bonds = find_all_bonds(L), dual_loops = find_all_dual_loops(L))
+    end
+end
+
+# [REVISION 2026-10-23, optimized 2026-10-24] Local "interval" updates (star-interval and bond-interval), see
+# REVISION_LOG.md Sec. 10-11.
+# Why they are needed: in the cluster update a line that reaches a vertex operator (IIII/XXXX), or a bond operator
+# when J_2 != 0, always takes all legs of that side together. A single spin line can never pass straight through
+# such an operator, although that leaves its weight unchanged (its matrix element does not depend on the spins).
+# Changes of that kind (e.g. creating a pair of XXXX on one star while vertex operators of the neighbouring stars
+# sit in between) were therefore never proposed, which biased <A> (and made <XX> converge very slowly).
+#
+# The move: given a mask S (the 4 spins of a star, or the 2 spins of a bond) and an ordered pair of operators
+# a != c that both act on exactly S, toggle both (IIII <-> XXXX, or ZZ/II <-> XX) and flip the spins of S on every
+# time slice strictly after a and up to c (cyclically, so the interval may wrap around imaginary time).
+# - Consistency: off-diagonal operators inside the interval map flipped states to flipped states; the toggled
+#   endpoints absorb the flip (a now flips S on its way out, c on its way in).
+# - Weight ratio: the two endpoint toggles, times every diagonal operator strictly inside the interval with an odd
+#   overlap with S (ZZZZ: (C_1 - B)/(C_1 + B), ZZ: (C_2 - zz)/(C_2 + zz)). XXXX, IIII, XX and II have
+#   spin-independent elements. An endpoint bond operator keeps its own Z_iZ_j (both of its spins flip).
+# - Proposal ("pairs" option), both symmetric because toggling moves no operator and the same (a, c) undoes it:
+#     :uniform (default) a and c independently uniform among the k operators on S (a == c: no move); the original
+#              version. Long intervals are possible in one step, which decorrelates the slow XX / sector mode best.
+#     :nearby  a uniform among the k operators on S, c = the next one on S after a (cyclically); short intervals,
+#              higher acceptance, slightly cheaper, but in case 2 the XX error was about 2x larger at equal sweeps
+#              (REVISION_LOG.md Sec. 11), so it is not the default.
+#
+# Cost (optimized version): one O(M) pass builds, for every mask, the list of its operators and, for every spin, the
+# sorted list of operators acting on it, plus each operator's current eigenvalue sgn = B_p or Z_iZ_j. A proposal then
+# walks only the operators on the spins of S inside the interval (each operator counted once), and an accepted move
+# only flips the eigenvalues it walked. The per-slice states are rebuilt once at the end (states[1] is flipped by S
+# for every accepted interval that wraps through slot 1), so the stage costs O(M) per sweep instead of
+# O(number of masks * M) (review comment, 2026-10-24).
+function interval_stage!(states, operators, L, J_1, J_2, C_1, C_2, C_3, C_4, rng; pairs = :uniform)
+    M = length(operators)
+    N = 2 * L^2
+    lat = lattice_lists(L)
+    do_bonds = J_2 != 0     # for J_2 = 0 there are no XX operators, so every bond toggle would have weight 0
+    by_mask = Dict{Int, Vector{Int}}()
+    by_spin = [Int[] for _ in 1:N]
+    sgn = zeros(Int8, M)
+    for i in 1:M
+        op = operators[i]
+        op[1] == 0 && continue
+        if op[1] in (2, 5) || (do_bonds && op[1] in (3, 4))
+            push!(get!(by_mask, op[2], Int[]), i)
+        end
+        if op[1] in (1, 3, 4)
+            sgn[i] = iseven(count_ones(op[2] & states[i])) ? 1 : -1
+        end
+        m = op[2]
+        while m != 0
+            push!(by_spin[trailing_zeros(m) + 1], i)
+            m &= m - 1
+        end
+    end
+    # Weight of an endpoint operator of type t at position p (stars: IIII/XXXX; bonds: ZZ/II/XX)
+    endpoint_weight(t, p) = t == 5 ? C_3 : t == 2 ? 1.0 : t == 4 ? J_2 : (J_1 == 0 ? C_4 : J_1 * (C_2 + sgn[p]))
+    flip_slot1 = 0
+    walked = Int[]
+    masks = do_bonds ? vcat(lat.vertices, lat.bonds) : lat.vertices
+    for S in masks
+        idx = get(by_mask, S, nothing)
+        (idx === nothing || length(idx) < 2) && continue
+        if pairs == :nearby
+            k = rand(rng, 1:length(idx))
+            a, c = idx[k], idx[mod1(k + 1, length(idx))]
+        else
+            a, c = rand(rng, idx), rand(rng, idx)
+            a == c && continue
+        end
+        ratio = 1.0
+        for p in (a, c)
+            t = operators[p][1]
+            ratio *= endpoint_weight(toggled_type(t), p) / endpoint_weight(t, p)
+        end
+        # Operators strictly inside the cyclic interval (a, c), visited through the lists of the spins of S
+        empty!(walked)
+        m = S
+        while m != 0
+            j = trailing_zeros(m)
+            v = by_spin[j + 1]
+            ranges = a < c ? (searchsortedfirst(v, a + 1):(searchsortedfirst(v, c) - 1),) :
+                             (searchsortedfirst(v, a + 1):length(v), 1:(searchsortedfirst(v, c) - 1))
+            for r in ranges, q in r
+                p = v[q]
+                ov = operators[p][2] & S
+                # count each operator once (at its lowest spin in S); only odd overlaps change anything
+                (trailing_zeros(ov) == j && isodd(count_ones(ov))) || continue
+                push!(walked, p)
+                t = operators[p][1]
+                if t == 1
+                    ratio *= (C_1 - sgn[p]) / (C_1 + sgn[p])
+                elseif t == 3 && J_1 != 0
+                    ratio *= (C_2 - sgn[p]) / (C_2 + sgn[p])
+                end
+            end
+            m &= m - 1
+        end
+        # Roll the dice
+        if rand(rng, ) < ratio
+            operators[a][1] = toggled_type(operators[a][1])
+            operators[c][1] = toggled_type(operators[c][1])
+            for p in walked
+                sgn[p] = -sgn[p]        # eigenvalues of walked ZZZZ/ZZ/XX flip (sgn = 0 for the others)
+            end
+            if a > c
+                flip_slot1 = xor(flip_slot1, S)
+            end
+        end
+    end
+    # Rebuild the per-slice states once
+    states[1] = xor(states[1], flip_slot1)
+    for i in 1:M-1
+        if operators[i][1] == 2 || operators[i][1] == 4
+            states[i+1] = xor(operators[i][2], states[i])
+        else
+            states[i+1] = states[i]
+        end
+    end
+    return states, operators
+end
+
 # The following function generates a list of all diagonal operators, with both integers.
 
 # Given the size L, generate all diagonal terms.
@@ -150,6 +340,62 @@ function find_all_diagonals(L)
     return diagonals
 end
 
+# [REVISION 2026-10-23] New helpers for the exact cluster acceptance probability (see REVISION_LOG.md).
+# Operator types are toggled by the cluster update as IIII <-> XXXX and ZZ/II <-> XX.
+toggled_type(op_type) = op_type == 5 ? 2 : op_type == 2 ? 5 : op_type == 3 ? 4 : 3
+
+# Matrix element of a "side-type" operator (IIII/XXXX, and ZZ/II/XX if J_2 != 0) of the given type. state is the
+# original incoming state of the operator. Flipping a side of a bond operator flips both of its spins, so Z_iZ_j has
+# the same value on both sides and in every flipped version, namely its value in the original incoming state.
+function side_op_weight(op_type, op, state, J_1, J_2, C_2, C_3, C_4)
+    if op_type == 5         # IIII
+        return C_3
+    elseif op_type == 2     # XXXX
+        return 1.0
+    elseif op_type == 4     # XX
+        return J_2
+    elseif J_1 == 0         # II
+        return C_4
+    else                    # ZZ
+        return J_1 * (C_2 + (-1)^(count_ones(op[2] & state)))
+    end
+end
+
+# Weight ratio W(after) / W(before) of the operator op at imaginary time t when the current cluster is flipped.
+# "before" = original configuration + previously accepted clusters (vertices_to_flip); "after" = also the current
+# cluster (cluster_vertices). state = states[t] is the ORIGINAL incoming state (states are updated only after all
+# clusters have been decided).
+# - Pass-through operators (ZZZZ, and ZZ/II if J_2 = 0) are stored with their leg numbers. Every spin line through
+#   them flips one of their spins and contributes 2 legs, so the matrix element depends only on the parity of the
+#   number of flipped lines. An II bond (J_1 = 0) has the spin-independent weight C_4.
+# - Side-type operators are stored with sides 0 (incoming) and 1 (outgoing); the type is toggled iff exactly one side
+#   is flipped.
+# A zero new weight (possible for C_1 = 1 or C_2 = 1) gives a zero ratio instead of the old 0/0 = NaN.
+function operator_flip_ratio(op, state, t, cluster_vertices, vertices_to_flip, J_1, J_2, C_1, C_2, C_3, C_4)
+    if op[1] == 1 || (op[1] == 3 && J_2 == 0)
+        if op[1] == 3 && J_1 == 0
+            return 1.0
+        end
+        C = op[1] == 1 ? C_1 : C_2
+        num_legs = 2 * count_ones(op[2])
+        legs_before = count(j -> (t, j) in vertices_to_flip, 1:num_legs)
+        legs_after = legs_before + count(j -> (t, j) in cluster_vertices, 1:num_legs)
+        b = (-1)^(count_ones(op[2] & state))
+        w_before = C + (iseven(div(legs_before, 2)) ? b : -b)
+        w_after = C + (iseven(div(legs_after, 2)) ? b : -b)
+        return w_after / w_before
+    else
+        f0_before = (t, 0) in vertices_to_flip
+        f1_before = (t, 1) in vertices_to_flip
+        f0_after = xor(f0_before, (t, 0) in cluster_vertices)
+        f1_after = xor(f1_before, (t, 1) in cluster_vertices)
+        type_before = xor(f0_before, f1_before) ? toggled_type(op[1]) : op[1]
+        type_after = xor(f0_after, f1_after) ? toggled_type(op[1]) : op[1]
+        return side_op_weight(type_after, op, state, J_1, J_2, C_2, C_3, C_4) /
+               side_op_weight(type_before, op, state, J_1, J_2, C_2, C_3, C_4)
+    end
+end
+
 # The following three functions are used for the QMC algorithm. The main function implements one 
 # QMC sweep, consisting of all diagonal updates, off-diagonal updates, and spin flip updates. A 
 # helper function is used to obtain the linked vertex representation of the configuration. Another 
@@ -157,7 +403,8 @@ end
 
 # Given the current configuration, list of all diagonal operators, size L, inverse temperature beta,
 # and the Hamiltonian parameters (J_1, J_2, C_1, C_2, C_3), perform one QMC sweep. 
-function qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, rng, diagnostic)
+# [REVISION 2026-10-24] New keyword interval_pairs (:uniform, default, or :nearby), the pair choice of the interval updates.
+function qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, rng, diagnostic; interval_pairs = :uniform)
     # Diagonal updates
     M = length(operators)                   # Number of operators/states in the configuration
     N_d = length(diagonals)                 # Total number of diagonal operators available
@@ -199,11 +446,10 @@ function qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_
             # ZZ/II (bond)
             elseif op[1] == 3
                 if J_1 == 0
-                    if J_2 != 0
-                        p_acc = (M - n + 1) / (beta * N_d * C_4)
-                    else
-                        p_acc = 0
-                    end
+                    # [REVISION 2026-10-23] II bond operators (weight C_4) must be removable for J_2 = 0 as well. The
+                    # removal probability used to be 0 when J_1 = J_2 = 0, so II operators were inserted but never
+                    # removed, and n (and M) grew without bound.
+                    p_acc = (M - n + 1) / (beta * N_d * C_4)
                 else
                     p_acc = (M - n + 1) / (beta * N_d * J_1 * (C_2 + (-1)^(count_ones(op[2] & states[i]))))
                 end
@@ -237,6 +483,7 @@ function qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_
             stack = Tuple{Int, Int}[]                   # The stack has the form ((vertex index 1, leg number 1), ...)
             push!(stack, (vertex_idx, leg))
             cluster_vertices = Set{Tuple{Int, Int}}()   # This has the same form as vertices_to_flip but is specific to the cluster
+            touched_ops = Set{Int}()                    # [REVISION 2026-10-23] imaginary times of all operators touched by the cluster
             p_acc = 1
             while !isempty(stack)
                 # Find the current vertex index and leg combination 
@@ -289,93 +536,11 @@ function qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_
                     push!(stack, curr_vertex[4][curr_leg])
                 end
 
-                # Update acceptance probability
-                # If ZZZZ (plaquette)
-                if curr_vertex[1] == 1
-                    # Determine the ratio of before/after matrix elements using the incoming state (either is fine)
-                    state_idx = curr_vertex[3]
-                    mat_el = (C_1 - (-1)^(count_ones(curr_vertex[2] & states[state_idx]))) / (C_1 + (-1)^(count_ones(curr_vertex[2] & states[state_idx])))                        
-                    # Determine if we have flipped an even or odd number of times before
-                    num_flips = count(x -> x[1] == curr_vertex[3], cluster_vertices) + count(x -> x[1] == curr_vertex[3], vertices_to_flip)
-                    if mod(num_flips, 2) == 0 
-                        if mod(num_flips, 4) == 0
-                            p_acc *= mat_el
-                        else
-                            p_acc /= mat_el
-                        end
-                    end
-                # If ZZ (bond) and J_2 = 0
-                elseif curr_vertex[1] == 3 && J_2 == 0
-                    # Determine the ratio of before/after matrix elements using the incoming state (either is fine)
-                    state_idx = curr_vertex[3]
-                    mat_el = (C_2 - (-1)^(count_ones(curr_vertex[2] & states[state_idx]))) / (C_2 + (-1)^(count_ones(curr_vertex[2] & states[state_idx])))                     
-                    # Determine if we have flipped an even or odd number of times before
-                    num_flips = count(x -> x[1] == curr_vertex[3], cluster_vertices) + count(x -> x[1] == curr_vertex[3], vertices_to_flip)
-                    if mod(num_flips, 2) == 0 
-                        if mod(num_flips, 4) == 0
-                            p_acc *= mat_el
-                        else
-                            p_acc /= mat_el
-                        end
-                    end
-                # Otherwise (assuming the operator + side is new)
-                elseif !((curr_vertex[3], side) in cluster_vertices)
-                    # First time encountering the vertex (across previous cluster and current cluster)
-                    if !((curr_vertex[3], xor(side, 1)) in cluster_vertices) && !((curr_vertex[3], xor(side, 1)) in vertices_to_flip)
-                        # ZZ/II -> XX
-                        if curr_vertex[1] == 3
-                            # Evaluate the matrix element using the incoming state (either is fine)
-                            state_idx = curr_vertex[3]
-                            if J_1 == 0
-                                p_acc /= C_4 / J_2
-                            else
-                                p_acc /= J_1 / J_2 * (C_2 + (-1)^(count_ones(curr_vertex[2] & states[state_idx])))
-                            end
-                        # XX -> ZZ/II
-                        elseif curr_vertex[1] == 4
-                            # Evaluate the matrix using the opposite (i.e. unchanged) of the specified side
-                            state_idx = mod1((curr_vertex[3] + xor(side, 1)), M)
-                            if J_1 == 0
-                                p_acc *= C_4 / J_2
-                            else
-                                p_acc *= J_1 / J_2 * (C_2 + (-1)^(count_ones(curr_vertex[2] & states[state_idx])))
-                            end
-                        # IIII -> XXXX
-                        elseif curr_vertex[1] == 5
-                            p_acc /= C_3
-                        # XXXX -> IIII
-                        elseif curr_vertex[1] == 2
-                            p_acc *= C_3
-                        end
-                    # Otherwise: Second time encountering the vertex, i.e. we need to reverse the flip
-                    else
-                        # ZZ/II -> XX -> ZZ/II
-                        if curr_vertex[1] == 3
-                            # Evaluate the matrix element using the specified side, and wrap around
-                            state_idx = mod1(curr_vertex[3] + side, M)
-                            if J_1 == 0
-                                p_acc *= C_4 / J_2
-                            else
-                                p_acc *= J_1 / J_2 * (C_2 + (-1)^(count_ones(curr_vertex[2] & states[state_idx])))
-                            end
-                        # XX -> ZZ/II -> XX
-                        elseif curr_vertex[1] == 4
-                            # Evaluate the matrix element using the specified side, and wrap around
-                            state_idx = mod1(curr_vertex[3] + side, M)
-                            if J_1 == 0
-                                p_acc /= C_4 / J_2
-                            else
-                                p_acc /= J_1 / J_2 * (C_2 + (-1)^(count_ones(curr_vertex[2] & states[state_idx])))
-                            end
-                        # IIII -> XXXX -> IIII
-                        elseif curr_vertex[1] == 5
-                            p_acc *= C_3
-                        # XXXX -> IIII -> XXXX
-                        elseif curr_vertex[1] == 2
-                            p_acc /= C_3
-                        end
-                    end
-                end
+                # [REVISION 2026-10-23] The acceptance probability is no longer updated leg by leg here (the old running
+                # multiply/divide gave 0/0 = NaN when C_1 = 1 or C_2 = 1, and used the ZZ formula for II bonds when
+                # J_1 = J_2 = 0). Instead we record the operator, and compute its exact weight ratio once the cluster
+                # is complete (see "Exact acceptance probability" below).
+                push!(touched_ops, curr_vertex[3])
 
                 # Append the vertex number and side/leg number
                 if curr_vertex[1] == 1 || (curr_vertex[1] == 3 && J_2 == 0)
@@ -383,6 +548,14 @@ function qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_
                 else
                     push!(cluster_vertices, (curr_vertex[3], side))
                 end
+            end
+
+            # [REVISION 2026-10-23] Exact acceptance probability of this cluster: the product over all touched operators
+            # of W(operator after flipping this cluster) / W(operator now), where "now" already includes the flips of
+            # previously accepted clusters (vertices_to_flip). The stored states are still the original ones.
+            p_acc = 1.0
+            for t in touched_ops
+                p_acc *= operator_flip_ratio(operators[t], states[t], t, cluster_vertices, vertices_to_flip, J_1, J_2, C_1, C_2, C_3, C_4)
             end
 
             # Roll the dice
@@ -506,6 +679,28 @@ function qmc_sweep(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_
             end
         end
     end
+
+    # [REVISION 2026-10-23] Topological-sector (X Wilson loop) update, see REVISION_LOG.md.
+    # The Z Wilson loops commute with every term when J_2 = 0, and the only other move that changes them (the
+    # single-spin column flip above) has to create two fluxes along the whole imaginary-time axis, so at large
+    # beta the sector never changed. Here we propose flipping all the spins of one non-contractible dual loop at
+    # every imaginary time. All XXXX/XX operators still connect consecutive states, and every ZZZZ/IIII operator
+    # keeps its matrix element (even overlap), so only operators with an odd overlap with the loop (the ZZ bonds
+    # crossing it) change weight. Metropolis acceptance with the exact weight ratio.
+    for loop in lattice_lists(L).dual_loops     # [REVISION 2026-10-24] cached instead of rebuilt every sweep
+        p_acc = dual_loop_ratio(states, operators, loop, J_1, C_1, C_2)
+        # Roll the dice
+        if rand(rng, ) < p_acc
+            for i in 1:M
+                states[i] = xor(states[i], loop)
+            end
+        end
+    end
+
+    # [REVISION 2026-10-23, optimized 2026-10-24] Local interval updates (see the comment above interval_stage!):
+    # one star-interval proposal per star and, for J_2 != 0, one bond-interval proposal per bond.
+    # interval_pairs = :uniform (default) or :nearby.
+    interval_stage!(states, operators, L, J_1, J_2, C_1, C_2, C_3, C_4, rng; pairs = interval_pairs)
     return states, operators
 end
 
@@ -612,8 +807,35 @@ function measure_all(states, operators, L)
     return n, n_A, n_B, n_zz, n_xx, mz, mz_2, mz_4, S_kmin
 end
 
+# [REVISION 2026-10-23] New measurement for the susceptibility estimator (see REVISION_LOG.md).
+# Return the averages of M_z and M_z^2 (per qubit) over the n propagated states, i.e. the states just before each
+# non-padding operator. The standard SSE estimator chi = beta*N*[(sum_p m_p)^2 + sum_p m_p^2] / (n(n+1)) is then
+# beta*N*(n*m_n^2 + m_2_n)/(n+1). The averages of measure_all run over all M slices (padding included); that is fine
+# for equal-time observables, but inserting them into this formula biased chi_M upwards (for large M, on average by
+# beta*N*n*(m_2_n - m_n^2)/(n+1)^2). For n = 0 the single state is used (the formula then gives beta*N*m^2).
+function measure_m_propagated(states, operators, L)
+    N = 2 * L^2
+    m_sum = 0.0
+    m_2_sum = 0.0
+    n = 0
+    for i in eachindex(operators)
+        if operators[i][1] != 0
+            m_p = 1 - 2 * count_ones(states[i]) / N
+            m_sum += m_p
+            m_2_sum += m_p^2
+            n += 1
+        end
+    end
+    if n == 0
+        m_p = 1 - 2 * count_ones(states[1]) / N
+        return m_p, m_p^2
+    end
+    return m_sum / n, m_2_sum / n
+end
+
 # Given the current configuration, list of all diagonal operators, size L, inverse temperature beta,
 # and the Hamiltonian parameters (J_1, J_2, C_1, C_2, C_3), perform one QMC sweep. 
+# [REVISION 2026-10-23] Note: qmc_sweep_old is not called anywhere and was NOT revised (it still has the old bugs).
 function qmc_sweep_old(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, rng, diagnostic)
     # Diagonal updates
     M = length(operators)                   # Number of operators/states in the configuration

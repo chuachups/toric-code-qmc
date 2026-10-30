@@ -18,6 +18,8 @@ function simulate(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3
     mz_2_arr = Float64[]
     mz_4_arr = Float64[]
     S_kmin_arr = Float64[]
+    m_n_arr = Float64[]     # [REVISION 2026-10-23] <m_z> over the n propagated states (for chi_M)
+    m_2_n_arr = Float64[]   # [REVISION 2026-10-23] <m_z^2> over the n propagated states (for chi_M)
 
     # If J_2 = 0, the initial configuration should have no XX operators
     if J_2 == 0 && count(op -> op[1] == 4, operators) != 0
@@ -42,12 +44,16 @@ function simulate(states, operators, diagonals, L, beta, J_1, J_2, C_1, C_2, C_3
         push!(mz_2_arr, mz_2)
         push!(mz_4_arr, mz_4)
         push!(S_kmin_arr, S_kmin)
+        # [REVISION 2026-10-23] Averages over the n propagated states, for the chi_M estimator
+        m_n, m_2_n = measure_m_propagated(states, operators, L)
+        push!(m_n_arr, m_n)
+        push!(m_2_n_arr, m_2_n)
     end
 
     if basis == "X"
-        write_output_file(states_init, operators_init, states, operators, length(states), n_arr, n_B_arr, n_A_arr, n_xx_arr, n_zz_arr, mz_arr, mz_2_arr, mz_4_arr, S_kmin_arr, L, beta, J_2, J_1, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
+        write_output_file(states_init, operators_init, states, operators, length(states), n_arr, n_B_arr, n_A_arr, n_xx_arr, n_zz_arr, mz_arr, mz_2_arr, mz_4_arr, S_kmin_arr, L, beta, J_2, J_1, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename; m_n_arr=m_n_arr, m_2_n_arr=m_2_n_arr)
     else
-        write_output_file(states_init, operators_init, states, operators, length(states), n_arr, n_A_arr, n_B_arr, n_zz_arr, n_xx_arr, mz_arr, mz_2_arr, mz_4_arr, S_kmin_arr, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename)
+        write_output_file(states_init, operators_init, states, operators, length(states), n_arr, n_A_arr, n_B_arr, n_zz_arr, n_xx_arr, mz_arr, mz_2_arr, mz_4_arr, S_kmin_arr, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis, num_sweeps, rng, seed, filename; m_n_arr=m_n_arr, m_2_n_arr=m_2_n_arr)
     end
 end
 

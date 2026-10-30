@@ -18,14 +18,16 @@ def find_all_vertices(L):
     for x in range(L):
         for y in range(L):
             vertex = 0
-            # Find the top spin
-            vertex |= 1 << (x + L * ((y - 1) % L))
-            # Find the bottom spin
-            vertex |= 1 << (x + L * y)
-            # Find the left spin
-            vertex |= 1 << (L**2 + (x - 1) % L + L * y)
-            # Find the right spin
+            # [REVISION 2026-10-23] Same fix as Julia/SSE.jl: the L^2 offset was on the wrong pair of spins, which
+            # made the "vertices" equal to plaquettes for L=2 (and anticommute with plaquettes for L>=3).
+            # Find the top spin (vertical link above the vertex)
+            vertex |= 1 << (L**2 + x + L * ((y - 1) % L))
+            # Find the bottom spin (vertical link below the vertex)
             vertex |= 1 << (L**2 + x + L * y)
+            # Find the left spin (horizontal link to the left of the vertex)
+            vertex |= 1 << ((x - 1) % L + L * y)
+            # Find the right spin (horizontal link to the right of the vertex)
+            vertex |= 1 << (x + L * y)
             vertices.append(vertex)
     return vertices
 

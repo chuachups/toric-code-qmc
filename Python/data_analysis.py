@@ -133,6 +133,15 @@ def compute_all(filename):
         m_2_arr = np.array(file["measurements/m_2"])
         m_4_arr = np.array(file["measurements/m_4"])
         S_kmin_arr = np.array(file["measurements/S_kmin"])
+        # [REVISION 2026-10-23] Averages over the n propagated states (written by the revised Julia code), used for
+        # chi_M. Files from the original code do not have them; then we fall back to the old (biased) slice averages.
+        if "measurements/m_n" in file:
+            m_n_arr = np.array(file["measurements/m_n"])
+            m_2_n_arr = np.array(file["measurements/m_2_n"])
+        else:
+            print("Warning: no m_n in file, chi_M uses the old slice-averaged estimator (biased upwards)")
+            m_n_arr = m_arr
+            m_2_n_arr = m_2_arr
 
         # Parameters
         L = file["parameters/L"][()]
@@ -150,7 +159,9 @@ def compute_all(filename):
 
     # Pre-compute
     n2_arr = n_arr**2
-    chi_M_arr = 2 * L**2 * beta * (n_arr * m_arr**2 + m_2_arr) / ((n_arr + 1))
+    # [REVISION 2026-10-23] Standard SSE estimator beta*N*[(sum_p m_p)^2 + sum_p m_p^2]/(n(n+1)) over the n propagated
+    # states (was evaluated with averages over all M slices, which biased chi_M upwards)
+    chi_M_arr = 2 * L**2 * beta * (n_arr * m_n_arr**2 + m_2_n_arr) / ((n_arr + 1))
     n_j_arr = n_zz_arr + n_xx_arr
     n2_j_arr = n_j_arr**2
 
@@ -179,6 +190,15 @@ def print_all(filename):
         m_2_arr = np.array(file["measurements/m_2"])
         m_4_arr = np.array(file["measurements/m_4"])
         S_kmin_arr = np.array(file["measurements/S_kmin"])
+        # [REVISION 2026-10-23] Averages over the n propagated states (written by the revised Julia code), used for
+        # chi_M. Files from the original code do not have them; then we fall back to the old (biased) slice averages.
+        if "measurements/m_n" in file:
+            m_n_arr = np.array(file["measurements/m_n"])
+            m_2_n_arr = np.array(file["measurements/m_2_n"])
+        else:
+            print("Warning: no m_n in file, chi_M uses the old slice-averaged estimator (biased upwards)")
+            m_n_arr = m_arr
+            m_2_n_arr = m_2_arr
 
         # Parameters
         L = file["parameters/L"][()]
@@ -196,7 +216,9 @@ def print_all(filename):
 
     # Pre-compute
     n2_arr = n_arr**2
-    chi_M_arr = 2 * L**2 * beta * (n_arr * m_arr**2 + m_2_arr) / ((n_arr + 1))
+    # [REVISION 2026-10-23] Standard SSE estimator beta*N*[(sum_p m_p)^2 + sum_p m_p^2]/(n(n+1)) over the n propagated
+    # states (was evaluated with averages over all M slices, which biased chi_M upwards)
+    chi_M_arr = 2 * L**2 * beta * (n_arr * m_n_arr**2 + m_2_n_arr) / ((n_arr + 1))
     n_j_arr = n_zz_arr + n_xx_arr
     n2_j_arr = n_j_arr**2
 
@@ -209,4 +231,8 @@ def print_all(filename):
         mean, err = jackknife(observable, data, L, beta, J_1, J_2, C_1, C_2, C_3, C_4, basis)
         print(observable, ":", format_result(mean, err))
 
-print_all("RawData/__L_2/__beta_1.000__J1_1.000__J2_0.000/__basis_Z/run_1/simulate_0.h5")
+# [REVISION 2026-10-23] Only run when executed as a script: this line used to run on every import (e.g. from
+# sse_vs_ed.py) and crashed whenever this particular file did not exist.
+if __name__ == "__main__":
+    print_all("RawData/__L_2/__beta_5.000__J1_1.000__J2_0.500/__basis_Z/run_0/simulate_1.h5")
+    print_all("RawData/__L_2/__beta_5.000__J1_1.000__J2_0.500/__basis_X/run_0/simulate_1.h5")
